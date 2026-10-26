@@ -8,8 +8,11 @@ export const BOT_NAMES = ['書蟲小文', '成語達人阿明', '字典王小華
 const ACC = [0.5, 0.7, 0.88], SPEED = [0.8, 0.6, 0.42];
 export const H = { S: null, deadline: 0, plan: [], botAt: 0, sprintNext: {}, send: null, isOn: () => true, last: 0, dirty: false };
 const now = () => Date.now();
+// the time and number of questions can be set before a game (S.opt: sec per question or turn, sprint length, questions)
+export function timeOf(S, u) { const U = UNITS[u], o = S?.opt || {}; return U.kind === 'sprint' ? (o.sprint || U.time) : (o.sec || U.time); }
+const T = () => timeOf(H.S, H.S.unit);
 
-export function hostAdopt(S, end) { H.S = S; H.deadline = end || now() + 3000; H.plan = []; H.botAt = 0; H.sprintNext = {}; if (S?.round?.kind === 'quiz' && S.round.sub === 'q') planBots(); }
+export function hostAdopt(S, end) { H.S = S; H.deadline = end || now() + 3000; H.plan = []; H.botAt = 0; H.sprintNext = {}; if (S?.unit) H.qStart = H.deadline - timeOf(S, S.unit) * 1000; if (S?.round?.kind === 'quiz' && S.round.sub === 'q') planBots(); }
 function pub(force) { H.dirty = true; if (force || now() - H.last > 150) flush(); }
 export function flush() { if (!H.dirty || !H.S) return; H.dirty = false; H.last = now(); H.S.v = (H.S.v || 0) + 1; H.S.left = Math.max(0, H.deadline - now()); H.send({ t: 'st', S: H.S }); }
 const P = (id) => H.S.players.find((p) => p.id === id);
@@ -17,12 +20,12 @@ const say = (s) => { H.S.say = s; };
 const bots = () => H.S.players.filter((p) => p.bot);
 
 // ---------------------------------------------------------------- setting up
-export function newShow(players, mode, unit) {
+export function newShow(players, mode, unit, opt = {}) {
   const plan = mode === 'show' ? [...shuffle(QUIZ_UNITS).slice(0, 3), pick(FINAL_UNITS)] : [unit];
-  H.S = { v: 0, phase: 'intro', mode, plan, step: 0, players: players.map((p) => ({ ...p, score: 0 })), round: null, say: '', code: H.S?.code };
+  H.S = { v: 0, phase: 'intro', mode, plan, step: 0, players: players.map((p) => ({ ...p, score: 0 })), round: null, say: '', opt };
   startStep(); pub(true);
 }
-export function toLobby(players) { H.S = { v: 0, phase: 'lobby', mode: H.S?.lobbyMode || 'show', players, round: null, say: '' }; pub(true); }
+export function toLobby(players) { H.S = { v: 0, phase: 'lobby', lobbyMode: H.S?.lobbyMode || 'show', opt: H.S?.opt || {}, players, round: null, say: '' }; pub(true); }
 function startStep() {
   const S = H.S, u = S.plan[S.step], U = UNITS[u], fin = S.mode === 'show' && S.step === S.plan.length - 1;
   let who = S.players.map((p) => p.id);
@@ -37,16 +40,16 @@ function startStep() {
 function begin() {
   const S = H.S, u = S.unit, U = UNITS[u];
   S.phase = 'play'; S.gain = {}; S.who.forEach((id) => { S.gain[id] = 0; });
-  if (U.kind === 'quiz' || U.kind === 'race') { S.round = { kind: U.kind, qs: U.gen(U.n), qi: -1, pts: {} }; nextQ(); }
+  if (U.kind === 'quiz' || U.kind === 'race') { S.round = { kind: U.kind, qs: U.gen(U.kind === 'quiz' && S.opt?.n ? S.opt.n : U.n), qi: -1, pts: {} }; nextQ(); }
   else if (U.kind === 'sprint') {
     S.round = { kind: 'sprint', pz: U.gen(), prog: {} }; S.who.forEach((id) => { S.round.prog[id] = { pts: 0, n: 0 }; });
-    H.deadline = now() + U.time * 1000; H.sprintNext = {}; say(u === 'zf' ? `讀音是「${S.round.pz.s}」，開始！` : '開始！能想到幾句就打幾句！');
+    H.deadline = now() + T() * 1000; H.sprintNext = {}; say(u === 'zf' ? `讀音是「${S.round.pz.s}」，開始！` : '開始！能想到幾句就打幾句！');
   } else {
     const [a, b] = S.who, r = S.round = { kind: 'duel', a, b, turn: a, over: false, log: [], err: null, turns: 0 };
     if (u === 'zp') Object.assign(r, zpInit());
     if (u === 'cz') { Object.assign(r, { cur: czStart(), keep: null, used: [], miss: { [a]: 0, [b]: 0 } }); r.tiles = czTiles(r.cur, null, []); }
     if (u === 'wz') { Object.assign(r, wzInit(), { sub: 'pick' }); r.tiles = wzTiles(r); }
-    H.deadline = now() + U.time * 1000; H.botAt = 0;
+    H.deadline = now() + T() * 1000; H.botAt = 0;
     say(`${P(a).n} 先開始！`);
   }
 }
@@ -58,24 +61,24 @@ function nextQ() {
   const done = r.qi >= r.qs.length || (r.kind === 'race' && Object.values(r.pts).some((n) => n >= U.target));
   if (done) return endUnit();
   r.sub = 'q'; r.ans = {}; r.lock = []; r.first = null;
-  H.deadline = now() + U.time * 1000; planBots();
+  H.qStart = now(); H.deadline = now() + T() * 1000; planBots();
   say(r.kind === 'race' ? `第 ${r.qi + 1} 題，搶答！` : `第 ${r.qi + 1} 題`);
 }
 function planBots() {
   const r = H.S.round, U = UNITS[H.S.unit];
-  H.plan = bots().filter((b) => H.S.who.includes(b.id)).map((b) => ({ id: b.id, at: now() + U.time * 1000 * (SPEED[b.lv] + Math.random() * 0.35) * (r.kind === 'race' ? 0.75 : 1), ok: Math.random() < ACC[b.lv] }));
+  H.plan = bots().filter((b) => H.S.who.includes(b.id)).map((b) => ({ id: b.id, at: now() + Math.min(U.time, T()) * 1000 * (SPEED[b.lv] + Math.random() * 0.35) * (r.kind === 'race' ? 0.75 : 1), ok: Math.random() < ACC[b.lv] }));
 }
 function wrongOf(q) { if (q.ui === 'choice') return q.opts.find((o) => o !== q.ans); return '✗'; }
 function answer(id, m) {
   const S = H.S, r = S.round, U = UNITS[S.unit];
   if (!r || r.sub !== 'q' || m.qi !== r.qi || !S.who.includes(id) || r.ans[id] || r.lock.includes(id)) return;
-  const q = r.qs[r.qi], ok = check(q, m.pick), ms = Math.max(0, Math.min(U.time * 1000, m.ms || 0));
+  const q = r.qs[r.qi], ok = check(q, m.pick), ms = Math.max(0, Math.min(T() * 1000, m.ms || 0));
   if (r.kind === 'race') {
     if (!ok) { r.lock.push(id); r.ans[id] = { pick: m.pick, ok: false }; if (S.who.every((w) => r.lock.includes(w) || !H.isOn(w))) reveal(); else pub(); return; }
     r.ans[id] = { pick: m.pick, ok: true }; r.first = id; r.pts[id] = (r.pts[id] || 0) + 1; S.gain[id] += 100; P(id).score += 100;
     say(`${P(id).n} 搶答成功！`); return reveal();
   }
-  const pts = ok ? 100 + Math.round(100 * (1 - ms / (U.time * 1000))) : 0;
+  const pts = ok ? 100 + Math.round(100 * (1 - ms / (T() * 1000))) : 0;
   r.ans[id] = { pick: m.pick, ok, pts };
   if (S.who.every((w) => r.ans[w] || !H.isOn(w))) reveal(); else pub();
 }
@@ -131,15 +134,15 @@ function duelMove(id, m) {
     const t = zpTry(r, m.w);
     if (t.err) { r.err = { id, msg: t.err, k: (r.err?.k || 0) + 1 }; return pub(true); }
     zpApply(r, m.w, t.cells); r.last = t.cells; r.err = null; r.log.unshift(`${name}：${m.w}`); r.turns++;
-    say(`${name} 接上了「${m.w}」！`); passTurn(other, U.time);
+    say(`${name} 接上了「${m.w}」！`); passTurn(other, T());
   } else if (S.unit === 'cz') {
     if (!czValid(r.cur, r.keep, r.used, m.c)) return czMiss(id, `「${m.c}」接不上「${r.cur}」！`);
     r.log.unshift(`${name}：${r.cur} → ${m.c}`); r.keep = czNextKeep(r.cur, m.c); r.used.push(r.cur); r.cur = m.c; r.turns++;
     if (!czMoves(r.cur, r.keep, r.used).length) { say(`${name} 出了絕招「${m.c}」，對手沒有字可以接！`); return czMiss(other, null); }
-    r.tiles = czTiles(r.cur, r.keep, r.used); say(`${name} 接「${m.c}」，換${r.keep === 'L' ? '右' : '左'}邊！`); passTurn(other, U.time);
+    r.tiles = czTiles(r.cur, r.keep, r.used); say(`${name} 接「${m.c}」，換${r.keep === 'L' ? '右' : '左'}邊！`); passTurn(other, T());
   } else if (S.unit === 'wz') {
     if (r.sub === 'pick') {
-      if (!wzFits(r, m.c)) { r.log.unshift(`${name}：「${m.c}」不是${r.cat}`); say(`「${m.c}」不屬於「${r.cat}」喔！換對手。`); r.tiles = wzTiles(r); return passTurn(other, U.time); }
+      if (!wzFits(r, m.c)) { r.log.unshift(`${name}：「${m.c}」不是${r.cat}`); say(`「${m.c}」不屬於「${r.cat}」喔！換對手。`); r.tiles = wzTiles(r); return passTurn(other, T()); }
       r.usedCh.push(m.c); r.ch = m.c; r.sub = 'place'; say(`${name} 寫了「${m.c}」，下在哪裡呢？`); H.botAt = 0; return pub(true);
     }
     const cell = m.cell | 0;
@@ -150,7 +153,7 @@ function duelMove(id, m) {
     if (r.board.every(Boolean)) return duelOver(P(r.a).score >= P(r.b).score ? r.a : r.b, '棋盤下滿了！');
     r.sub = 'pick'; r.ch = null;
     if (r.usedCh.length >= [...r.set].length - 2) Object.assign(r, (() => { const n = wzInit(); return { cat: n.cat, set: n.set, usedCh: [] }; })());
-    r.tiles = wzTiles(r); passTurn(other, U.time);
+    r.tiles = wzTiles(r); passTurn(other, T());
   }
 }
 function passTurn(id, sec) { const r = H.S.round; r.turn = id; H.deadline = now() + sec * 1000; H.botAt = 0; pub(true); }
@@ -161,13 +164,13 @@ function czMiss(id, why) {
   const other = id === r.a ? r.b : r.a;
   if (r.miss[id] >= 3) return duelOver(other, `${P(id).n} 已經失三分！`);
   r.cur = czStart(); r.keep = null; r.used = []; r.tiles = czTiles(r.cur, null, []);
-  passTurn(id, UNITS.cz.time);
+  passTurn(id, T());
 }
 function duelTimeout() {
   const S = H.S, r = S.round, id = r.turn, other = id === r.a ? r.b : r.a;
   if (S.unit === 'zp') return duelOver(other, `${P(id).n} 時間到，接不出來！`);
   if (S.unit === 'cz') return czMiss(id, `${P(id).n} 時間到！`);
-  if (S.unit === 'wz') { say(`${P(id).n} 時間到，換人！`); if (r.sub === 'place') { r.usedCh.pop(); r.sub = 'pick'; } r.tiles = wzTiles(r); return passTurn(other, UNITS.wz.time); }
+  if (S.unit === 'wz') { say(`${P(id).n} 時間到，換人！`); if (r.sub === 'place') { r.usedCh.pop(); r.sub = 'pick'; } r.tiles = wzTiles(r); return passTurn(other, T()); }
 }
 function duelOver(win, why) {
   const S = H.S, r = S.round; r.over = true; r.winner = win;
@@ -177,7 +180,7 @@ function duelOver(win, why) {
 function duelBot() {
   const S = H.S, r = S.round, b = P(r.turn);
   if (!b?.bot || r.over) return;
-  if (!H.botAt) { H.botAt = now() + (S.unit === 'zp' ? 4000 + Math.random() * 6000 : 1800 + Math.random() * 3500) * (1.2 - b.lv * 0.2); return; }
+  if (!H.botAt) { H.botAt = now() + (S.unit === 'zp' ? 4000 + Math.random() * 6000 : 1800 + Math.random() * 3500) * (1.2 - b.lv * 0.2); H.botAt = Math.min(H.botAt, now() + T() * 800); return; }
   if (now() < H.botAt) return;
   H.botAt = 0;
   if (S.unit === 'zp') {
@@ -231,7 +234,7 @@ export function tick() {
     const r = S.round;
     if (r.kind === 'quiz' || r.kind === 'race') {
       if (r.sub === 'q') {
-        for (const b of H.plan) if (!b.done && t >= b.at) { b.done = true; answer(b.id, { t: 'ans', qi: r.qi, pick: b.ok ? r.qs[r.qi].ans : wrongOf(r.qs[r.qi]), ms: b.at - (H.deadline - UNITS[S.unit].time * 1000) }); if (r.sub !== 'q') break; }
+        for (const b of H.plan) if (!b.done && t >= b.at) { b.done = true; answer(b.id, { t: 'ans', qi: r.qi, pick: b.ok ? r.qs[r.qi].ans : wrongOf(r.qs[r.qi]), ms: b.at - H.qStart }); if (r.sub !== 'q') break; }
         if (r.sub === 'q' && (late || S.who.every((w) => r.ans[w] || r.lock.includes(w) || !H.isOn(w)))) reveal();
       } else if (late) { nextQ(); pub(true); }
     } else if (r.kind === 'sprint') { sprintBots(); if (late) endSprint(); }

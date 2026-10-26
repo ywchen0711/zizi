@@ -4,6 +4,7 @@
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; min-height: 100%; }
+html { background: var(--bg); }
 body { background: radial-gradient(ellipse at 50% -10%, #2b4597 0%, var(--bg2) 35%, var(--bg) 80%) fixed; color: var(--ink); font-family: 'Noto Sans TC', system-ui, sans-serif; -webkit-tap-highlight-color: transparent; }
 #app { max-width: 760px; margin: 0 auto; padding: 0 16px 40px; }
 button { font: inherit; cursor: pointer; color: inherit; }
@@ -188,3 +189,8 @@ h2 { color: #fff; }
   .pic { font-size: 36px; }
   .opt { padding: 16px 6px; }
 }
+
+.more { margin-top: 8px; border-top: 1px solid var(--line); padding-top: 8px; }
+.more summary { cursor: pointer; font-weight: 700; color: var(--mute); }
+.more select { flex: 1; }
+.limit { font-weight: 700; color: var(--blue); margin: 0 0 6px; }

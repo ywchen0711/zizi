@@ -1,7 +1,7 @@
 // 字字千金: the screens. The state comes from the host (this browser alone, or the room's host online); this file only
 // draws it and sends the player's answers back.
 import { net, join, leave, send, isHost, newCode, cleanCode } from './net.js';
-import { H, hostAdopt, newShow, toLobby, onAction, tick, skip, BOT_NAMES } from './host.js';
+import { H, hostAdopt, newShow, toLobby, onAction, tick, skip, BOT_NAMES, timeOf } from './host.js';
 import { UNITS, ORDER, check, tzFits, IDIOM, zpTry, zpOptions, ZP_W, czInfo, WZ_N, shuffle, pick } from './units.js';
 import { sfx, setMute, muted } from './sfx.js';
 
@@ -11,6 +11,17 @@ const ls = { get(k, d) { try { const v = localStorage.getItem(k); return v == nu
 const cfg = Object.assign({ name: '玩家' + Math.floor(Math.random() * 900 + 100), bots: 3, lv: 1 }, ls.get('zizi.cfg', {}));
 const saveCfg = () => ls.set('zizi.cfg', cfg);
 const LV = ['簡單', '普通', '困難'];
+// the time and number of questions: 0 is each unit's own
+const SEC = [0, 3, 5, 8, 10, 12, 15, 20, 25, 30, 45, 60, 90], SPRINT = [0, 30, 45, 60, 90, 120, 180, 300], NQ = [0, 3, 5, 8, 10, 15, 20];
+const optOf = (o) => ({ sec: o.sec || 0, sprint: o.sprint || 0, n: o.n || 0 });
+function optRows(o) {
+  const sel = (k, list, f) => `<select data-opt="${k}">${list.map((v) => `<option value="${v}" ${(o[k] || 0) === v ? 'selected' : ''}>${v ? f(v) : '標準（依單元）'}</option>`).join('')}</select>`;
+  return `<label class="row">答題秒數 ${sel('sec', SEC, (v) => `每題 ${v} 秒`)}</label>
+    <label class="row">限時單元 ${sel('sprint', SPRINT, (v) => `共 ${v} 秒`)}</label>
+    <label class="row">題數 ${sel('n', NQ, (v) => `${v} 題`)}</label>
+    <p class="hint">答題秒數也是對戰時每一回合的秒數；限時單元是「字有發揮」和「同中求異」。</p>`;
+}
+const optText = (o) => [o.sec ? `每題 ${o.sec} 秒` : '', o.sprint ? `限時單元 ${o.sprint} 秒` : '', o.n ? `每關 ${o.n} 題` : ''].filter(Boolean).join('・') || '標準時間與題數';
 
 let online = false, S = null, end = 0, total = 1, screen = 'home', view = { key: '' }, last = null;
 const me = () => net.me.id;
@@ -124,14 +135,15 @@ function homeScreen() {
   app.innerHTML = `<div class="home-wrap"><div class="title"><div class="big">字字<b>千金</b></div><p>國字・成語・注音　十五種闖關單元</p></div>
     <div class="card"><label class="row">我的名字 <input id="nm" maxlength="10" value="${esc(cfg.name)}"></label>
     <label class="row">電腦對手 <select id="bots">${[0, 1, 2, 3].map((n) => `<option value="${n}" ${cfg.bots === n ? 'selected' : ''}>${n} 位</option>`).join('')}</select>
-    難度 <select id="lv">${LV.map((s, i) => `<option value="${i}" ${cfg.lv === i ? 'selected' : ''}>${s}</option>`).join('')}</select></label></div>
+    難度 <select id="lv">${LV.map((s, i) => `<option value="${i}" ${cfg.lv === i ? 'selected' : ''}>${s}</option>`).join('')}</select></label>
+    <details class="more" ${cfg.sec || cfg.sprint || cfg.n ? 'open' : ''}><summary>時間與題數</summary>${optRows(cfg)}</details></div>
     <div class="menu">
       <button class="btn gold" data-act="show">🎬 節目模式<small>三關初賽＋冠軍決賽</small></button>
       <button class="btn" data-act="units">📚 單元練習<small>十五個單元任你挑</small></button>
       <button class="btn blue" data-act="online">🌐 連線對戰<small>開房間跟朋友比</small></button>
     </div>
     <p class="foot">玩法仿照公視益智節目《一字千金》的各個單元。答案依教育部標準字體與《重編國語辭典修訂本》。</p></div>`;
-  const keep = () => { cfg.name = $('#nm').value.trim().slice(0, 10) || cfg.name; cfg.bots = +$('#bots').value; cfg.lv = +$('#lv').value; saveCfg(); };
+  const keep = () => { cfg.name = $('#nm').value.trim().slice(0, 10) || cfg.name; cfg.bots = +$('#bots').value; cfg.lv = +$('#lv').value; app.querySelectorAll('[data-opt]').forEach((e) => { cfg[e.dataset.opt] = +e.value; }); saveCfg(); };
   app.querySelectorAll('input,select').forEach((e) => e.addEventListener('change', keep));
 }
 function unitsScreen() {
@@ -143,7 +155,7 @@ function startLocal(mode, unit) {
   const duel = unit && (UNITS[unit].kind === 'duel');
   const n = duel ? 1 : mode === 'show' ? Math.max(1, cfg.bots) : cfg.bots;
   last = { mode, unit };
-  newShow([{ id: me(), n: cfg.name, bot: false, lv: 0 }, ...botsFor(n, cfg.lv)], mode, unit);
+  newShow([{ id: me(), n: cfg.name, bot: false, lv: 0 }, ...botsFor(n, cfg.lv)], mode, unit, optOf(cfg));
   screen = 'game';
 }
 
@@ -166,9 +178,11 @@ function lobbyScreen() {
     <ul class="plist">${S.players.map((p) => `<li>${p.bot ? '🤖' : '🙂'} ${esc(p.n)} ${p.bot ? `<small>${LV[p.lv]}</small>` : ''} ${p.id === net.roster[0]?.id ? '<small class="tag">房主</small>' : ''} ${hst && p.bot ? `<button class="mini" data-kick="${p.id}">移除</button>` : ''}</li>`).join('')}</ul>
     ${hst ? `<div class="row">加電腦 ${LV.map((s, i) => `<button class="mini" data-addbot="${i}">${s}</button>`).join('')}</div>
       <label class="row">玩什麼 <select id="mode"><option value="show" ${mode === 'show' ? 'selected' : ''}>🎬 節目模式（三關＋決賽）</option>${ORDER.map((u) => `<option value="${u}" ${mode === u ? 'selected' : ''}>${UNITS[u].icon} ${UNITS[u].name}</option>`).join('')}</select></label>
+      <details class="more" ${S.opt?.sec || S.opt?.sprint || S.opt?.n ? 'open' : ''}><summary>時間與題數</summary>${optRows(S.opt || {})}</details>
       <button class="btn gold" data-act="startroom" ${S.players.length < 2 ? 'disabled' : ''}>開始！</button>${S.players.length < 2 ? '<p class="hint">至少要兩位玩家（可以加電腦）。</p>' : ''}`
-    : '<p class="hint">等房主開始遊戲…</p>'}</div>`, { board: false });
+    : `<p class="hint">房主選的是：${mode === 'show' ? '節目模式' : esc(UNITS[mode]?.name)}・${optText(S.opt || {})}</p><p class="hint">等房主開始遊戲…</p>`}</div>`, { board: false });
   $('#mode')?.addEventListener('change', (e) => { H.S.lobbyMode = e.target.value; H.dirty = true; tick(); });
+  if (hst) app.querySelectorAll('[data-opt]').forEach((e) => e.addEventListener('change', () => { H.S.opt = { ...(H.S.opt || {}), [e.dataset.opt]: +e.value }; H.dirty = true; tick(); }));
   view.upd = lobbyScreen;
 }
 
@@ -177,6 +191,7 @@ function introScreen() {
   const U = UNITS[S.unit];
   app.innerHTML = frame(`<div class="card intro"><div class="step">${S.mode === 'show' ? (S.final ? '冠軍決賽' : `第 ${S.step + 1} 關`) : '單元練習'}</div>
     <div class="uic">${U.icon}</div><h1>${U.name}</h1><p class="rule">${esc(U.rule)}</p>
+    <p class="limit">⏱ ${U.kind === 'sprint' ? `限時 ${timeOf(S, S.unit)} 秒` : U.kind === 'duel' ? `每回合 ${timeOf(S, S.unit)} 秒` : `每題 ${timeOf(S, S.unit)} 秒${U.kind === 'quiz' ? `・共 ${S.opt?.n || U.n} 題` : ''}`}</p>
     ${S.who.length < S.players.length ? `<p class="who">出賽：${S.who.map((id) => esc(P(id)?.n)).join(' 對 ')}</p>` : ''}
     ${timer()}${amHost() ? '<button class="btn" data-act="skip">我準備好了！</button>' : ''}</div>${host(S.say)}`, { board: true });
   view.upd = setHost;
@@ -376,7 +391,7 @@ app.addEventListener('click', (e) => {
   else if (a === 'mkroom') enterRoom(newCode());
   else if (a === 'joinroom') { const c = cleanCode($('#code').value); if (c.length === 4) enterRoom(c); else $('#code').focus(); }
   else if (a === 'skip') { if (online) { if (isHost()) skip(); } else skip(); }
-  else if (a === 'startroom') { const m = H.S.lobbyMode || 'show'; newShow(H.S.players.map((p) => ({ ...p, score: 0 })), m === 'show' ? 'show' : 'unit', m === 'show' ? null : m); }
+  else if (a === 'startroom') { const m = H.S.lobbyMode || 'show'; newShow(H.S.players.map((p) => ({ ...p, score: 0 })), m === 'show' ? 'show' : 'unit', m === 'show' ? null : m, optOf(H.S.opt || {})); }
   else if (a === 'again') { if (online) toLobby(H.S.players.map((p) => ({ ...p, score: 0 }))); else startLocal(last.mode, last.unit); }
   else if (b.dataset.unit) startLocal('unit', b.dataset.unit);
   else if (b.dataset.addbot) { const lv = +b.dataset.addbot, used = H.S.players.map((p) => p.n), nm = BOT_NAMES.find((n) => !used.includes(n)) || '電腦'; H.S.players.push({ id: 'bot' + Math.random().toString(36).slice(2, 7), n: nm, bot: true, lv, score: 0 }); H.dirty = true; tick(); }

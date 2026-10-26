@@ -36,4 +36,14 @@ for (const u of U.ORDER) {
 newShow([0, 1, 2].map((lv, i) => ({ id: 'b' + i, n: 'b' + i, bot: true, lv })), 'show');
 let n = 0; while (H.S.phase !== 'end' && n < 400000) { t += 200; tick(); n++; }
 console.log('show', H.S.plan.join(','), H.S.phase, H.S.champ);
+// a set time and number of questions
+for (const [u, opt] of [['jc', { sec: 3, n: 4 }], ['zp', { sec: 5 }], ['zf', { sprint: 20 }], ['cz', { sec: 60 }]]) {
+  newShow([0, 2].map((lv, i) => ({ id: 'b' + i, n: 'b' + i, bot: true, lv })), 'unit', u, opt);
+  const t0 = t; let n = 0, qs = 0, firstLeft = null;
+  while (H.S.phase !== 'end' && n < 200000) { t += 200; tick(); n++; if (H.S.phase === 'play' && firstLeft == null) firstLeft = H.deadline - t; if (H.S.round?.qs) qs = H.S.round.qs.length; }
+  const want = (opt.sec || opt.sprint) * 1000;
+  console.log('opt', u, JSON.stringify(opt), 'questions', qs, 'first clock', firstLeft, 'game', Math.round((t - t0) / 1000) + 's');
+  if (Math.abs(firstLeft - want) > 400) bad('time ' + u);
+  if (opt.n && qs !== opt.n) bad('n ' + u);
+}
 console.log(process.exitCode ? 'FAILED' : 'all ok');
