@@ -24,6 +24,21 @@ for (const [a, b] of D.JC_WRITE) if (a === b || len(a) !== len(b)) bad('JC ' + a
 const seen = new Set(); for (const x of D.CZ) { if (seen.has(x.ch)) bad('CZ dup ' + x.ch); seen.add(x.ch); }
 console.log('cz', D.CZ.length, 'tz patterns', U.tzPatterns().length, U.tzPatterns().slice(0, 12).map((p) => p.mask + p.ans.length).join(' '));
 for (const u of Object.keys(U.UNITS)) { const X = U.UNITS[u]; if (X.gen && X.kind !== 'sprint') { for (let i = 0; i < 20; i++) { const qs = X.gen(X.n || 1); for (const q of [].concat(qs)) if (q.ans && !U.check(q, q.ans)) bad('check ' + u + ' ' + q.ans); } } }
+// the made-up pools
+const PL = await import('../js/pools.js'), D2 = await import('../js/data2.js');
+console.log('pools', JSON.stringify(PL.counts()), 'tz', U.tzPatterns().length);
+for (const [k, n] of Object.entries(PL.counts())) if (['jc', 'zz', 'ss', 'qw', 'tj', 'ty', 'hz', 'zw', 'dd'].includes(k) && n < 200) bad('pool too small ' + k + ' ' + n);
+const hs = new Map(); for (const line of D2.HOMO.trim().split(String.fromCharCode(10))) for (const c of line.trim().split(/\s+/)[1]) { if (hs.has(c)) bad('HOMO twice ' + c); hs.set(c, 1); }
+for (const [a, b] of PL.JC_W) if (a === b || PL.IDIOM.has(b) && a !== b && !D.JC_WRITE.some((x) => x[1] === b)) bad('JC ' + a + b);
+for (const [zy, w, a, alts] of PL.TY_ALL) if (alts.includes(a) || !w.includes('＿')) bad('TY ' + w);
+for (const [ch, ps, ex] of PL.QW_ALL) if (len(ps) !== 3 || ps.includes(ex) || len(ch) !== 1) bad('QW ' + ch + ps + ex);
+for (const [w, ps] of PL.TJ_ALL) if (len(w) !== 2 || len(ps) < 3 || len(ps) > 6) bad('TJ ' + w + ps);
+for (const [s, ok, b] of PL.ZY_ALL) for (const c of ok) if (b.includes(c)) bad('ZY ' + s + c);
+for (const [s, r, alts] of PL.ZW_ALL) { const m = s.match(/\[(.)\]/u); if (!m || m[1] === r || alts.includes(r)) bad('ZW ' + s); }
+for (const [a, src] of PL.SS_ALL) if (src.length !== 4 || src.includes(a)) bad('SS ' + a);
+for (let i = 0; i < 300; i++) { const q = U.UNITS.zz.gen(1)[0], clues = [...q.p.matchAll(/<b>(.)<\/b>/gu)].map((m) => m[1]); for (const t of q.tiles) if (t !== q.ans && PL.zzFits(clues).includes(t)) bad('zz tile fits ' + t); }
+console.log('samples');
+for (const u of ['jc', 'zz', 'ss', 'qw', 'tj', 'ty', 'zw']) { const q = U.UNITS[u].gen(1)[0]; console.log(' ', u, q.p.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 50), '|', (q.opts || q.tiles || q.groups || q.sent || []).join('').slice(0, 30), '=>', q.ans); }
 // play every unit with four computer players
 const states = []; H.send = (m) => states.push(m.S.phase);
 for (const u of U.ORDER) {

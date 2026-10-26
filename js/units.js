@@ -1,11 +1,8 @@
 // The units of the show. Each makes its questions (on the host), checks an answer, and for the turn-by-turn duels
 // keeps the board. Everything here is plain data in, plain data out, so the host can send it to every player.
-import { IDIOMS, JC_WRITE, JC_READ, ZZ, SS, QW, TJ, TY, ZY, HZ, ZW, CZ, WZ, COMMON } from './data.js';
-
-export const IDIOM = new Set(IDIOMS);
-for (const q of SS) { IDIOM.add(q[0]); q[1].forEach((w) => IDIOM.add(w)); }
-for (const q of HZ) IDIOM.add(q[1]);
-const ALL = [...IDIOM];
+import { CZ, COMMON } from './data.js';
+import { IDIOM, ALL, JC_W, JC_READ, TY_ALL as TY, ZW_ALL as ZW, ZY_ALL as ZY, ZZ_ALL, zzFits, QW_ALL as QW, TJ_ALL as TJ, SS_ALL as SS, HZ_ALL as HZ, WZ_ALL as WZ } from './pools.js';
+export { IDIOM };
 
 export const rnd = (n) => Math.floor(Math.random() * n);
 export const pick = (a) => a[rnd(a.length)];
@@ -22,19 +19,24 @@ export const UNITS = {
   jc: { name: '將錯糾錯', kind: 'quiz', time: 8, n: 10, icon: '⚖️',
     rule: '每題兩個選項，一個是常見的錯誤，一個才是正確的。看準了再按，越快答對分數越高！',
     gen(n) {
-      const w = take(JC_WRITE, Math.ceil(n * 0.7)).map(([a, b]) => ({ ui: 'choice', p: '<div class="ask">哪一個寫法正確？</div>', opts: shuffle([a, b]), ans: a, big: true }));
+      const w = take(JC_W, Math.ceil(n * 0.75)).map(([a, b]) => ({ ui: 'choice', p: '<div class="ask">哪一個寫法正確？</div>', opts: shuffle([a, b]), ans: a, big: true }));
       const r = take(JC_READ, n - w.length).map(([word, i, a, b]) => ({ ui: 'choice', p: `<div class="ask">「${chars(word).map((c, k) => k === i ? `<em>${c}</em>` : c).join('')}」的「${chars(word)[i]}」怎麼念？</div>`, opts: shuffle([a, b]), ans: a, zy: true }));
       return shuffle([...w, ...r]);
     } },
   zz: { name: '字字珠璣', kind: 'quiz', time: 20, n: 8, icon: '💎',
     rule: '畫面上有幾個字，請找出一個「關鍵字」，能和每一個字都組成詞語。例如：流、水、床、岸 → 河。',
-    gen(n) { return take(ZZ, n).map(([cl, a]) => ({ ui: 'build', slots: 1, type: true, p: `<div class="clues">${chars(cl).map((c) => `<b>${c}</b>`).join('')}</div><div class="ask">哪一個字能跟它們都組成詞？</div>`, tiles: shuffle([a, ...fillers(9, cl + a)]), ans: a })); } },
+    gen(n) {
+      return take(ZZ_ALL, n).map((z) => {
+        const a = z.key, cl = (z.fixed && Math.random() < 0.5 ? z.fixed : take(z.ps, 4).join('')), also = zzFits(chars(cl));
+        return { ui: 'build', slots: 1, type: true, p: `<div class="clues">${chars(cl).map((c) => `<b>${c}</b>`).join('')}</div><div class="ask">哪一個字能跟它們都組成詞？</div>`, tiles: shuffle([a, ...fillers(9, cl + also.join(''))]), ans: a, alt: also.filter((x) => x !== a) };
+      });
+    } },
   ss: { name: '四說新語', kind: 'quiz', time: 30, n: 6, icon: '🀄',
     rule: '畫面上有四句成語。從每一句裡各挑一個字，組成一句新的成語。',
     gen(n) {
       return take(SS, n).map(([a, src]) => {
         const groups = shuffle(src);
-        return { ui: 'build', slots: 4, type: true, oneper: true, p: '<div class="ask">每句各取一字，組成一句新成語</div>', groups: groups.map((w) => chars(w)), ans: a };
+        return { ui: 'build', slots: 4, type: true, oneper: true, p: '<div class="ask">每句各取一字，組成一句新成語</div>', groups: groups.map((w) => chars(w)), ans: a, anyGroups: true };
       });
     } },
   qw: { name: '去無成字', kind: 'quiz', time: 15, n: 8, icon: '🧩',
@@ -97,7 +99,11 @@ export function check(q, p) {
   if (p == null) return false;
   p = String(p).trim();
   if (q.ui === 'fix') return p === q.ans;
-  if (p === q.ans) return true;
+  if (p === q.ans || q.alt?.includes(p)) return true;
+  if (q.anyGroups && chars(p).length === 4 && IDIOM.has(p)) { // any idiom with one character from each of the four
+    const c = chars(p), fit = (k, used) => k === 4 || q.groups.some((g, gi) => !used.includes(gi) && g.includes(c[k]) && fit(k + 1, [...used, gi]));
+    return fit(0, []);
+  }
   if (q.any && chars(p).length === 4 && IDIOM.has(p)) { // any idiom found in the grid counts
     const left = [...q.tiles]; for (const c of chars(p)) { const k = left.indexOf(c); if (k < 0) return false; left.splice(k, 1); } return true;
   }
@@ -113,7 +119,7 @@ export function tzPatterns() {
     const c = chars(w);
     for (let i = 0; i < 4; i++) for (let j = i + 1; j < 4; j++) { const k = `${i}${j}${c[i]}${c[j]}`; if (!m.has(k)) m.set(k, []); m.get(k).push(w); }
   }
-  PATS = [...m.entries()].filter(([k, ws]) => ws.length >= 5).map(([k, ws]) => {
+  PATS = [...m.entries()].filter(([k, ws]) => ws.length >= 4).map(([k, ws]) => {
     const [i, j, a, b] = chars(k), mask = ['○', '○', '○', '○']; mask[+i] = a; mask[+j] = b;
     return { mask: mask.join(''), i: +i, j: +j, a, b, ans: ws };
   });
